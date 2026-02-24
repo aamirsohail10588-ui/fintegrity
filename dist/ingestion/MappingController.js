@@ -32,8 +32,7 @@ async function confirmMapping(req, res) {
             mappingVersionId,
         });
     }
-    catch (err) {
-        console.error(err);
+    catch {
         res.status(500).json({
             status: "error",
             message: "Failed to save mapping",

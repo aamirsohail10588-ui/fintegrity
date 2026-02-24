@@ -2,7 +2,6 @@ import type { IEventStore } from "../core/IEventStore";
 import { replay } from "../core";
 import { accountBalanceReducer } from "../state";
 import type { AccountBalanceState } from "../state";
-import { getPool } from "../infrastructure/db";
 import type { PoolClient } from "pg";
 import type { DomainEvent } from "../core";
 

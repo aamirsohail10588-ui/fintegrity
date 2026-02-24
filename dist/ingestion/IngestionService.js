@@ -42,7 +42,7 @@ class IngestionService {
     constructor(store) {
         this.store = store;
     }
-    async ingest(input, idempotencyKey) {
+    async ingest(input, idempotencyKey, tenantId) {
         const pool = (0, db_1.getPool)();
         const client = await pool.connect();
         try {
@@ -70,13 +70,12 @@ class IngestionService {
                 businessId: input.reference,
                 amount,
             });
-            console.log("INGEST ENTITY ID:", JSON.stringify(input.entityId));
             const versionResult = await client.query(`
   SELECT version
   FROM entities
-  WHERE id = $1
+  WHERE id = $1 AND tenant_id = $2
   FOR UPDATE
-  `, [input.entityId]);
+  `, [input.entityId, tenantId]);
             if (versionResult.rows.length === 0) {
                 throw new Error("[INGESTION] Entity does not exist");
             }

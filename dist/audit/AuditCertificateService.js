@@ -23,8 +23,7 @@ class AuditCertificateService {
         if (relevantEvents.length === 0) {
             throw new Error("No events found for entity/version");
         }
-        // 2. Replay (validates signatures internally)
-        const state = (0, core_1.replay)(relevantEvents, {}, state_1.accountBalanceReducer);
+        (0, core_1.replay)(relevantEvents, {}, state_1.accountBalanceReducer);
         // 3. Compute history root
         const historyRoot = (0, core_1.computeHistoryRoot)(relevantEvents);
         const snapshotRows = (await (0, db_1.query)(`

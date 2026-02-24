@@ -159,7 +159,6 @@ async function run() {
     await clientA.query("COMMIT");
 
     // Both read version 0 and try to append version 1
-    const version = 1;
     const payload = {
       entries: [
         { accountId: "cash", debit: 100, credit: 0 },
@@ -299,7 +298,7 @@ async function run() {
 
       console.log("Tamper detection test: FAILED");
       throw new Error("Integrity system did not detect tampering");
-    } catch (err) {
+    } catch {
       console.log("Tamper detection test: PASSED");
     }
   }

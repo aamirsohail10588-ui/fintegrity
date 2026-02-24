@@ -1,4 +1,3 @@
-import type { DomainEvent } from "../core";
 import { IngestionDomainService } from "../domain/ingestion/IngestionDomainService";
 
 import type { IEventStore } from "../core/IEventStore";
@@ -31,6 +30,7 @@ export class IngestionService {
   public async ingest(
     input: RawTransactionInput,
     idempotencyKey: string,
+    tenantId: string,
   ): Promise<string> {
     const pool = getPool();
     const client = await pool.connect();
@@ -76,16 +76,14 @@ export class IngestionService {
         amount,
       });
 
-      console.log("INGEST ENTITY ID:", JSON.stringify(input.entityId));
-
       const versionResult = await client.query(
         `
   SELECT version
   FROM entities
-  WHERE id = $1
+  WHERE id = $1 AND tenant_id = $2
   FOR UPDATE
   `,
-        [input.entityId],
+        [input.entityId, tenantId],
       );
 
       if (versionResult.rows.length === 0) {

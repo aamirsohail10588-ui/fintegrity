@@ -42,7 +42,7 @@ function startApiServer() {
             });
             return;
         }
-        catch (error) {
+        catch {
             logger_1.logger.info({
                 module: "API",
                 action: "Registering entity route",

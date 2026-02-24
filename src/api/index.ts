@@ -53,7 +53,7 @@ export function startApiServer(): void {
           balances,
         });
         return;
-      } catch (error) {
+      } catch {
         logger.info({
           module: "API",
           action: "Registering entity route",

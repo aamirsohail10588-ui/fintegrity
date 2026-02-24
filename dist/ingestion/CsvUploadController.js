@@ -10,6 +10,7 @@ const path_1 = __importDefault(require("path"));
 const fs_1 = __importDefault(require("fs"));
 const csv_parse_1 = require("csv-parse");
 const HeaderScorer_1 = require("./HeaderScorer");
+const core_1 = require("../core");
 const uploadDir = path_1.default.join(__dirname, "../../uploads");
 if (!fs_1.default.existsSync(uploadDir)) {
     fs_1.default.mkdirSync(uploadDir);
@@ -55,7 +56,11 @@ async function handleCsvUpload(req, res) {
         });
     }
     catch (error) {
-        console.error("[CSV UPLOAD ERROR]", error);
+        core_1.logger.error({
+            module: "INGESTION",
+            action: "CSV upload failed",
+            details: String(error),
+        });
         res.status(400).json({
             status: "error",
             message: error instanceof Error ? error.message : "Unknown error",

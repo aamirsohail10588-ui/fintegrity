@@ -13,6 +13,12 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { confirmMapping } from "../ingestion/MappingController";
 import { logger } from "../core";
+import { RawTransactionSchema } from "../validation/ingestionSchemas";
+import { errorMiddleware } from "./errorMiddleware";
+import { asyncHandler } from "./asyncHandler";
+import { ValidationError } from "../errors/ValidationError";
+import { AuthorizationError } from "../errors/AuthorizationError";
+import { IngestionService } from "../ingestion/IngestionService";
 
 interface AuthenticatedRequest extends Request {
   userId: string;
@@ -151,69 +157,51 @@ export function startApiServer(): void {
     }
   });
 
-  app.post("/ingest", requireAuth, async (req: Request, res: Response) => {
-    try {
-      const input = req.body;
+  app.post(
+    "/ingest",
+    requireAuth,
+    asyncHandler(async (req: Request, res: Response) => {
+      const parseResult = RawTransactionSchema.safeParse(req.body);
+
+      if (!parseResult.success) {
+        throw new ValidationError("Invalid request payload");
+      }
+
+      const input = parseResult.data;
 
       const idempotencyKey = req.header("Idempotency-Key");
 
       if (!idempotencyKey) {
-        res.status(400).json({
-          status: "error",
-          message: "Missing Idempotency-Key header",
-        });
-        return;
+        throw new ValidationError("Missing Idempotency-Key header");
       }
 
       const authReq = req as AuthenticatedRequest;
 
-      const actorId = authReq.userId;
-      const actorRole = authReq.role;
-      const tenantId = authReq.tenantId;
-
-      if (actorRole !== "admin" && actorRole !== "accountant") {
-        res.status(403).json({
-          status: "error",
-          message: "Actor not authorized to ingest transactions",
-        });
-        return;
+      if (authReq.role !== "admin" && authReq.role !== "accountant") {
+        throw new AuthorizationError(
+          "Actor not authorized to ingest transactions",
+        );
       }
-
-      const { IngestionService } =
-        await import("../ingestion/IngestionService");
-      const { PostgresEventStore } =
-        await import("../infrastructure/PostgresEventStore");
 
       const store = new PostgresEventStore();
       const ingestion = new IngestionService(store);
 
-      const eventId: string = await ingestion.ingest(
+      const eventId = await ingestion.ingest(
         {
           ...input,
-          actorId,
-          actorRole,
-          tenantId,
+          actorId: authReq.userId,
+          actorRole: authReq.role,
         },
         idempotencyKey,
+        authReq.tenantId,
       );
 
       res.status(201).json({
         status: "success",
         eventId,
       });
-    } catch (error) {
-      logger.error({
-        module: "API",
-        action: "Ingestion failed",
-        details: String(error),
-      });
-
-      res.status(400).json({
-        status: "error",
-        message: error instanceof Error ? error.message : "Unknown error",
-      });
-    }
-  });
+    }),
+  );
 
   app.get("/entity/:entityId", async (req: Request, res: Response) => {
     try {
@@ -263,66 +251,40 @@ export function startApiServer(): void {
     }
   });
 
-  app.get("/events/:entityId", async (req: Request, res: Response) => {
-    try {
+  app.get(
+    "/events/:entityId",
+    asyncHandler(async (req: Request, res: Response) => {
       const rawEntityId = req.params.entityId;
 
-      if (Array.isArray(rawEntityId)) {
-        res.status(400).json({
-          status: "error",
-          message: "Invalid entityId",
-        });
-        return;
+      if (!rawEntityId || Array.isArray(rawEntityId)) {
+        throw new ValidationError("Invalid entityId");
       }
 
-      const entityId: string = rawEntityId;
-
       const store = new PostgresEventStore();
-      const events = await store.getByEntity(entityId);
+      const events = await store.getByEntity(rawEntityId);
 
       res.status(200).json({
         status: "success",
-        entityId,
+        entityId: rawEntityId,
         eventCount: events.length,
         events,
       });
-    } catch (error) {
-      logger.error({
-        module: "API",
-        action: "Event query failed",
-        details: String(error),
-      });
-
-      res.status(500).json({
-        status: "error",
-        message: error instanceof Error ? error.message : "Unknown error",
-      });
-    }
-  });
-
-  app.get("/integrity/:entityId", async (req: Request, res: Response) => {
-    try {
+    }),
+  );
+  app.get(
+    "/integrity/:entityId",
+    asyncHandler(async (req: Request, res: Response) => {
       const rawEntityId = req.params.entityId;
 
-      if (Array.isArray(rawEntityId)) {
-        res.status(400).json({
-          status: "error",
-          message: "Invalid entityId",
-        });
-        return;
+      if (!rawEntityId || Array.isArray(rawEntityId)) {
+        throw new ValidationError("Invalid entityId");
       }
 
-      const entityId: string = rawEntityId;
-
       const store = new PostgresEventStore();
-      const events = await store.getByEntity(entityId);
+      const events = await store.getByEntity(rawEntityId);
 
       if (events.length === 0) {
-        res.status(404).json({
-          status: "error",
-          message: "No events found for entity",
-        });
-        return;
+        throw new ValidationError("No events found for entity");
       }
 
       const { replay, computeHistoryRoot } = await import("../core");
@@ -334,24 +296,13 @@ export function startApiServer(): void {
 
       res.status(200).json({
         status: "success",
-        entityId,
+        entityId: rawEntityId,
         eventCount: events.length,
         historyRoot,
         integrity: "verified",
       });
-    } catch (error) {
-      logger.error({
-        module: "API",
-        action: "Integrity check failed",
-        details: String(error),
-      });
-
-      res.status(500).json({
-        status: "error",
-        message: error instanceof Error ? error.message : "Unknown error",
-      });
-    }
-  });
+    }),
+  );
 
   app.post(
     "/snapshot/:entityId/seal",
@@ -402,139 +353,109 @@ export function startApiServer(): void {
 
   app.get(
     "/snapshot/verify/:entityId/:version",
-    async (req: Request, res: Response) => {
-      try {
-        const rawEntityId = req.params.entityId;
-        const rawVersion = req.params.version;
+    asyncHandler(async (req: Request, res: Response) => {
+      const rawEntityId = req.params.entityId;
+      const rawVersion = req.params.version;
 
-        if (Array.isArray(rawEntityId) || Array.isArray(rawVersion)) {
-          res.status(400).json({
-            status: "error",
-            message: "Invalid parameters",
-          });
-          return;
-        }
-
-        const entityId: string = rawEntityId;
-        const version = Number(rawVersion);
-
-        const snapshotRows = (await query(
-          `
-  SELECT version, leaf_count, merkle_root
-  FROM snapshots
-  WHERE entity_id = $1
-  AND version = $2
-  `,
-          [entityId, version],
-        )) as SnapshotRow[];
-
-        if (snapshotRows.length === 0) {
-          res.status(404).json({
-            status: "error",
-            message: "Snapshot not found",
-          });
-          return;
-        }
-
-        const snapshot = snapshotRows[0];
-
-        const store = new PostgresEventStore();
-        const allEvents = await store.getByEntity(entityId);
-
-        const relevantEvents = allEvents.filter(
-          (e) => e.metadata.version <= version,
-        );
-
-        const { replay } = await import("../core");
-        const { accountBalanceReducer } = await import("../state");
-        const { buildLeafHashes, buildMerkleRoot } = await import("../core");
-
-        const initialState: Record<string, number> = {};
-
-        const fullState = replay(
-          relevantEvents,
-          initialState,
-          accountBalanceReducer,
-        );
-
-        const leaves = buildLeafHashes(entityId, version, fullState);
-
-        const recomputedRoot = buildMerkleRoot(leaves);
-
-        const match = recomputedRoot === snapshot.merkle_root;
-
-        res.status(200).json({
-          status: "success",
-          entityId,
-          version,
-          storedRoot: snapshot.merkle_root,
-          recomputedRoot,
-          match,
-          eventCount: relevantEvents.length,
-        });
-      } catch (error) {
-        logger.error({
-          module: "API",
-          action: "Snapshot verification failed",
-          details: String(error),
-        });
-
-        res.status(500).json({
-          status: "error",
-          message: error instanceof Error ? error.message : "Unknown error",
-        });
+      if (!rawEntityId || Array.isArray(rawEntityId)) {
+        throw new ValidationError("Invalid entityId");
       }
-    },
+
+      if (!rawVersion || Array.isArray(rawVersion)) {
+        throw new ValidationError("Invalid version");
+      }
+
+      const version = Number(rawVersion);
+
+      if (Number.isNaN(version)) {
+        throw new ValidationError("Version must be a number");
+      }
+
+      const snapshotRows = (await query(
+        `
+      SELECT version, leaf_count, merkle_root
+      FROM snapshots
+      WHERE entity_id = $1
+      AND version = $2
+      `,
+        [rawEntityId, version],
+      )) as SnapshotRow[];
+
+      if (snapshotRows.length === 0) {
+        throw new ValidationError("Snapshot not found");
+      }
+
+      const snapshot = snapshotRows[0];
+
+      const store = new PostgresEventStore();
+      const allEvents = await store.getByEntity(rawEntityId);
+
+      const relevantEvents = allEvents.filter(
+        (e) => e.metadata.version <= version,
+      );
+
+      const { replay } = await import("../core");
+      const { accountBalanceReducer } = await import("../state");
+      const { buildLeafHashes, buildMerkleRoot } = await import("../core");
+
+      const fullState = replay(relevantEvents, {}, accountBalanceReducer);
+
+      const leaves = buildLeafHashes(rawEntityId, version, fullState);
+      const recomputedRoot = buildMerkleRoot(leaves);
+
+      const match = recomputedRoot === snapshot.merkle_root;
+
+      res.status(200).json({
+        status: "success",
+        entityId: rawEntityId,
+        version,
+        storedRoot: snapshot.merkle_root,
+        recomputedRoot,
+        match,
+        eventCount: relevantEvents.length,
+      });
+    }),
   );
 
-  app.get("/entities/:entityId/ledger", async (req: Request, res: Response) => {
-    try {
+  app.get(
+    "/entities/:entityId/ledger",
+    asyncHandler(async (req: Request, res: Response) => {
       const rawEntityId = req.params.entityId;
 
-      if (Array.isArray(rawEntityId)) {
-        res.status(400).json({
-          status: "error",
-          message: "Invalid entityId",
-        });
-        return;
+      if (!rawEntityId || Array.isArray(rawEntityId)) {
+        throw new ValidationError("Invalid entityId");
       }
-
-      const entityId: string = rawEntityId;
 
       // 1️⃣ Entity metadata
       const entityRows = (await query(
         `
-  SELECT id, version
-  FROM entities
-  WHERE id = $1
-  `,
-        [entityId],
+      SELECT id, version
+      FROM entities
+      WHERE id = $1
+      `,
+        [rawEntityId],
       )) as EntityRow[];
 
       if (entityRows.length === 0) {
-        res.status(404).json({
-          status: "error",
-          message: "Entity not found",
-        });
-        return;
+        throw new ValidationError("Entity not found");
       }
 
       const entity = entityRows[0];
 
-      // 2️⃣ Events (ordered)
+      // 2️⃣ Events
       const store = new PostgresEventStore();
-      const events = await store.getByEntity(entityId);
+      const events = await store.getByEntity(rawEntityId);
 
       // 3️⃣ Latest snapshot
       const snapshotRows = (await query(
         `
-  SELECT id, version, merkle_root, created_at
-  FROM snapshots
-  WHERE entity_id = $1
-  ORDER BY version DESC
-  LIMIT 1
-  `,
-        [entityId],
+      SELECT id, version, merkle_root, created_at
+      FROM snapshots
+      WHERE entity_id = $1
+      ORDER BY version DESC
+      LIMIT 1
+      `,
+        [rawEntityId],
       )) as SnapshotListRow[];
 
       const snapshot = snapshotRows.length > 0 ? snapshotRows[0] : null;
@@ -542,11 +463,11 @@ export function startApiServer(): void {
       // 4️⃣ Projection
       const projectionRows = (await query(
         `
-  SELECT balances_json, version, rebuilt_at
-  FROM entity_read_models
-  WHERE entity_id = $1
-  `,
-        [entityId],
+      SELECT balances_json, version, rebuilt_at
+      FROM entity_read_models
+      WHERE entity_id = $1
+      `,
+        [rawEntityId],
       )) as ProjectionRow[];
 
       const projection = projectionRows.length > 0 ? projectionRows[0] : null;
@@ -561,58 +482,36 @@ export function startApiServer(): void {
         snapshot,
         events,
       });
-    } catch (error) {
-      logger.error({
-        module: "API",
-        action: "Ledger fetch failed",
-        details: String(error),
-      });
+    }),
+  );
 
-      res.status(500).json({
-        status: "error",
-        message: error instanceof Error ? error.message : "Unknown error",
-      });
-    }
-  });
-
-  app.post("/entities", requireAuth, async (req: Request, res: Response) => {
-    try {
+  app.post(
+    "/entities",
+    requireAuth,
+    asyncHandler(async (req: Request, res: Response) => {
       const authReq = req as AuthenticatedRequest;
 
       if (authReq.role !== "admin") {
-        res.status(403).json({
-          status: "error",
-          message: "Only admin can create entities",
-        });
-        return;
+        throw new AuthorizationError("Only admin can create entities");
       }
 
       const { entityId } = req.body;
 
       if (!entityId || typeof entityId !== "string") {
-        res.status(400).json({
-          status: "error",
-          message: "entityId is required",
-        });
-        return;
+        throw new ValidationError("entityId is required");
       }
 
-      // Check if entity already exists
       const existing = (await query(
         `
-  SELECT id
-  FROM entities
-  WHERE id = $1
-  `,
+      SELECT id
+      FROM entities
+      WHERE id = $1
+      `,
         [entityId],
       )) as EntityRow[];
 
       if (existing.length > 0) {
-        res.status(400).json({
-          status: "error",
-          message: "Entity already exists",
-        });
-        return;
+        throw new ValidationError("Entity already exists");
       }
 
       await query(
@@ -627,19 +526,8 @@ export function startApiServer(): void {
         status: "success",
         entityId,
       });
-    } catch (error) {
-      logger.error({
-        module: "API",
-        action: "Entity creation failed",
-        details: String(error),
-      });
-
-      res.status(500).json({
-        status: "error",
-        message: error instanceof Error ? error.message : "Unknown error",
-      });
-    }
-  });
+    }),
+  );
 
   app.get(
     "/certificate/:entityId/:version",
@@ -692,7 +580,9 @@ export function startApiServer(): void {
 
   const PORT = 3000;
 
-  async function start() {
+  async function start(): Promise<void> {
+    console.log("DB URL:", process.env.DATABASE_URL);
+
     try {
       // Fail-fast DB check
       await query("SELECT 1");
@@ -704,7 +594,7 @@ export function startApiServer(): void {
           details: `http://localhost:${PORT}`,
         });
       });
-    } catch (err) {
+    } catch {
       logger.error({
         module: "SYSTEM",
         action: "DB connection failed. Exiting.",
@@ -713,6 +603,8 @@ export function startApiServer(): void {
       process.exit(1);
     }
   }
+
+  app.use(errorMiddleware);
 
   start();
 }

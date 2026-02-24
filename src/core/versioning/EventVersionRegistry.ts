@@ -1,5 +1,3 @@
-import { snapshot } from "node:test";
-
 export class EventVersionRegistry {
   private static readonly currentVersions: Record<string, number> = {
     transaction_ingested: 2,

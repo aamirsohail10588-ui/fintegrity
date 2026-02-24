@@ -5,8 +5,6 @@ import {
   validateSnapshot,
 } from "../core";
 
-import { query } from "../infrastructure/db";
-
 import { PostgresEventStore } from "../infrastructure/PostgresEventStore";
 
 import { accountBalanceReducer } from "../state";

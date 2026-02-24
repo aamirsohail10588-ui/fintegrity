@@ -21,9 +21,15 @@ export default [
     },
     rules: {
       "@typescript-eslint/no-explicit-any": "error",
-      "@typescript-eslint/no-unused-vars": "warn",
-      "@typescript-eslint/explicit-function-return-type": "warn",
+      "@typescript-eslint/explicit-function-return-type": "error",
       "no-console": "error",
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        {
+          argsIgnorePattern: "^_",
+          varsIgnorePattern: "^_",
+        },
+      ],
     },
   },
 
@@ -35,6 +41,8 @@ export default [
       "src/sandbox/**",
       "src/scripts/**",
       "src/core/protocolTest.ts",
+      "src/integration/systemTest.ts",
+      "src/signer/**",
     ],
     rules: {
       "no-console": "off",

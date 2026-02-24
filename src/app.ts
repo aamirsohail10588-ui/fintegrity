@@ -9,7 +9,6 @@ import { API_LAYER } from "./api";
 import { logger } from "./core";
 
 import { runSandbox } from "./sandbox/runner";
-import { PostgresEventStore } from "./infrastructure/PostgresEventStore";
 
 function bootstrap(): void {
   logger.info({

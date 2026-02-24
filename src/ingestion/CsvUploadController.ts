@@ -2,7 +2,6 @@ import { Request, Response } from "express";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
-import { parseCsvFile } from "./CsvParser";
 import { parse } from "csv-parse";
 import { suggestHeaderMapping } from "./HeaderScorer";
 import { logger } from "../core";
@@ -25,7 +24,10 @@ const storage = multer.diskStorage({
 
 export const uploadMiddleware = multer({ storage });
 
-export async function handleCsvUpload(req: Request, res: Response) {
+export async function handleCsvUpload(
+  req: Request,
+  res: Response,
+): Promise<void> {
   try {
     if (!req.file) {
       res.status(400).json({
@@ -62,7 +64,11 @@ export async function handleCsvUpload(req: Request, res: Response) {
       suggestions,
     });
   } catch (error) {
-    console.error("[CSV UPLOAD ERROR]", error);
+    logger.error({
+      module: "INGESTION",
+      action: "CSV upload failed",
+      details: String(error),
+    });
 
     res.status(400).json({
       status: "error",

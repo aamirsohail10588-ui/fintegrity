@@ -12,10 +12,26 @@ import https from "https";
 import fs from "fs";
 import path from "path";
 
+export interface AuditCertificateResult {
+  certificate: {
+    entityId: string;
+    version: number;
+    eventCount: number;
+    historyRoot: string;
+    snapshotRoot: string | null;
+    verifiedAt: string;
+  };
+  certificateHash: string;
+  signature: string;
+}
+
 export class AuditCertificateService {
   private readonly store = new PostgresEventStore();
 
-  public async generate(entityId: string, version: number) {
+  public async generate(
+    entityId: string,
+    version: number,
+  ): Promise<AuditCertificateResult> {
     // 1. Load all events
     const allEvents = await this.store.getByEntity(entityId);
 
@@ -27,8 +43,7 @@ export class AuditCertificateService {
       throw new Error("No events found for entity/version");
     }
 
-    // 2. Replay (validates signatures internally)
-    const state = replay(relevantEvents, {}, accountBalanceReducer);
+    replay(relevantEvents, {}, accountBalanceReducer);
 
     // 3. Compute history root
     const historyRoot = computeHistoryRoot(relevantEvents);

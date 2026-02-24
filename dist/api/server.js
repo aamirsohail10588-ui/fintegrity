@@ -49,6 +49,12 @@ const bcrypt_1 = __importDefault(require("bcrypt"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const MappingController_1 = require("../ingestion/MappingController");
 const core_1 = require("../core");
+const ingestionSchemas_1 = require("../validation/ingestionSchemas");
+const errorMiddleware_1 = require("./errorMiddleware");
+const asyncHandler_1 = require("./asyncHandler");
+const ValidationError_1 = require("../errors/ValidationError");
+const AuthorizationError_1 = require("../errors/AuthorizationError");
+const IngestionService_1 = require("../ingestion/IngestionService");
 function startApiServer() {
     const app = (0, express_1.default)();
     app.use(express_1.default.json());
@@ -118,55 +124,32 @@ function startApiServer() {
             });
         }
     });
-    app.post("/ingest", authMiddleware_1.requireAuth, async (req, res) => {
-        try {
-            const input = req.body;
-            const idempotencyKey = req.header("Idempotency-Key");
-            if (!idempotencyKey) {
-                res.status(400).json({
-                    status: "error",
-                    message: "Missing Idempotency-Key header",
-                });
-                return;
-            }
-            const authReq = req;
-            const actorId = authReq.userId;
-            const actorRole = authReq.role;
-            const tenantId = authReq.tenantId;
-            if (actorRole !== "admin" && actorRole !== "accountant") {
-                res.status(403).json({
-                    status: "error",
-                    message: "Actor not authorized to ingest transactions",
-                });
-                return;
-            }
-            const { IngestionService } = await Promise.resolve().then(() => __importStar(require("../ingestion/IngestionService")));
-            const { PostgresEventStore } = await Promise.resolve().then(() => __importStar(require("../infrastructure/PostgresEventStore")));
-            const store = new PostgresEventStore();
-            const ingestion = new IngestionService(store);
-            const eventId = await ingestion.ingest({
-                ...input,
-                actorId,
-                actorRole,
-                tenantId,
-            }, idempotencyKey);
-            res.status(201).json({
-                status: "success",
-                eventId,
-            });
+    app.post("/ingest", authMiddleware_1.requireAuth, (0, asyncHandler_1.asyncHandler)(async (req, res) => {
+        const parseResult = ingestionSchemas_1.RawTransactionSchema.safeParse(req.body);
+        if (!parseResult.success) {
+            throw new ValidationError_1.ValidationError("Invalid request payload");
         }
-        catch (error) {
-            core_1.logger.error({
-                module: "API",
-                action: "Ingestion failed",
-                details: String(error),
-            });
-            res.status(400).json({
-                status: "error",
-                message: error instanceof Error ? error.message : "Unknown error",
-            });
+        const input = parseResult.data;
+        const idempotencyKey = req.header("Idempotency-Key");
+        if (!idempotencyKey) {
+            throw new ValidationError_1.ValidationError("Missing Idempotency-Key header");
         }
-    });
+        const authReq = req;
+        if (authReq.role !== "admin" && authReq.role !== "accountant") {
+            throw new AuthorizationError_1.AuthorizationError("Actor not authorized to ingest transactions");
+        }
+        const store = new PostgresEventStore_1.PostgresEventStore();
+        const ingestion = new IngestionService_1.IngestionService(store);
+        const eventId = await ingestion.ingest({
+            ...input,
+            actorId: authReq.userId,
+            actorRole: authReq.role,
+        }, idempotencyKey, authReq.tenantId);
+        res.status(201).json({
+            status: "success",
+            eventId,
+        });
+    }));
     app.get("/entity/:entityId", async (req, res) => {
         try {
             const rawEntityId = req.params.entityId;
@@ -205,82 +188,42 @@ function startApiServer() {
             res.status(500).json({ error: "Internal server error" });
         }
     });
-    app.get("/events/:entityId", async (req, res) => {
-        try {
-            const rawEntityId = req.params.entityId;
-            if (Array.isArray(rawEntityId)) {
-                res.status(400).json({
-                    status: "error",
-                    message: "Invalid entityId",
-                });
-                return;
-            }
-            const entityId = rawEntityId;
-            const store = new PostgresEventStore_1.PostgresEventStore();
-            const events = await store.getByEntity(entityId);
-            res.status(200).json({
-                status: "success",
-                entityId,
-                eventCount: events.length,
-                events,
-            });
+    app.get("/events/:entityId", (0, asyncHandler_1.asyncHandler)(async (req, res) => {
+        const rawEntityId = req.params.entityId;
+        if (!rawEntityId || Array.isArray(rawEntityId)) {
+            throw new ValidationError_1.ValidationError("Invalid entityId");
         }
-        catch (error) {
-            core_1.logger.error({
-                module: "API",
-                action: "Event query failed",
-                details: String(error),
-            });
-            res.status(500).json({
-                status: "error",
-                message: error instanceof Error ? error.message : "Unknown error",
-            });
+        const store = new PostgresEventStore_1.PostgresEventStore();
+        const events = await store.getByEntity(rawEntityId);
+        res.status(200).json({
+            status: "success",
+            entityId: rawEntityId,
+            eventCount: events.length,
+            events,
+        });
+    }));
+    app.get("/integrity/:entityId", (0, asyncHandler_1.asyncHandler)(async (req, res) => {
+        const rawEntityId = req.params.entityId;
+        if (!rawEntityId || Array.isArray(rawEntityId)) {
+            throw new ValidationError_1.ValidationError("Invalid entityId");
         }
-    });
-    app.get("/integrity/:entityId", async (req, res) => {
-        try {
-            const rawEntityId = req.params.entityId;
-            if (Array.isArray(rawEntityId)) {
-                res.status(400).json({
-                    status: "error",
-                    message: "Invalid entityId",
-                });
-                return;
-            }
-            const entityId = rawEntityId;
-            const store = new PostgresEventStore_1.PostgresEventStore();
-            const events = await store.getByEntity(entityId);
-            if (events.length === 0) {
-                res.status(404).json({
-                    status: "error",
-                    message: "No events found for entity",
-                });
-                return;
-            }
-            const { replay, computeHistoryRoot } = await Promise.resolve().then(() => __importStar(require("../core")));
-            const { accountBalanceReducer } = await Promise.resolve().then(() => __importStar(require("../state")));
-            replay(events, {}, accountBalanceReducer);
-            const historyRoot = computeHistoryRoot(events);
-            res.status(200).json({
-                status: "success",
-                entityId,
-                eventCount: events.length,
-                historyRoot,
-                integrity: "verified",
-            });
+        const store = new PostgresEventStore_1.PostgresEventStore();
+        const events = await store.getByEntity(rawEntityId);
+        if (events.length === 0) {
+            throw new ValidationError_1.ValidationError("No events found for entity");
         }
-        catch (error) {
-            core_1.logger.error({
-                module: "API",
-                action: "Integrity check failed",
-                details: String(error),
-            });
-            res.status(500).json({
-                status: "error",
-                message: error instanceof Error ? error.message : "Unknown error",
-            });
-        }
-    });
+        const { replay, computeHistoryRoot } = await Promise.resolve().then(() => __importStar(require("../core")));
+        const { accountBalanceReducer } = await Promise.resolve().then(() => __importStar(require("../state")));
+        replay(events, {}, accountBalanceReducer);
+        const historyRoot = computeHistoryRoot(events);
+        res.status(200).json({
+            status: "success",
+            entityId: rawEntityId,
+            eventCount: events.length,
+            historyRoot,
+            integrity: "verified",
+        });
+    }));
     app.post("/snapshot/:entityId/seal", authMiddleware_1.requireAuth, async (req, res) => {
         try {
             const rawEntityId = req.params.entityId;
@@ -313,185 +256,120 @@ function startApiServer() {
             });
         }
     });
-    app.get("/snapshot/verify/:entityId/:version", async (req, res) => {
-        try {
-            const rawEntityId = req.params.entityId;
-            const rawVersion = req.params.version;
-            if (Array.isArray(rawEntityId) || Array.isArray(rawVersion)) {
-                res.status(400).json({
-                    status: "error",
-                    message: "Invalid parameters",
-                });
-                return;
-            }
-            const entityId = rawEntityId;
-            const version = Number(rawVersion);
-            const snapshotRows = (await (0, db_1.query)(`
-  SELECT version, leaf_count, merkle_root
-  FROM snapshots
-  WHERE entity_id = $1
-  AND version = $2
-  `, [entityId, version]));
-            if (snapshotRows.length === 0) {
-                res.status(404).json({
-                    status: "error",
-                    message: "Snapshot not found",
-                });
-                return;
-            }
-            const snapshot = snapshotRows[0];
-            const store = new PostgresEventStore_1.PostgresEventStore();
-            const allEvents = await store.getByEntity(entityId);
-            const relevantEvents = allEvents.filter((e) => e.metadata.version <= version);
-            const { replay } = await Promise.resolve().then(() => __importStar(require("../core")));
-            const { accountBalanceReducer } = await Promise.resolve().then(() => __importStar(require("../state")));
-            const { buildLeafHashes, buildMerkleRoot } = await Promise.resolve().then(() => __importStar(require("../core")));
-            const initialState = {};
-            const fullState = replay(relevantEvents, initialState, accountBalanceReducer);
-            const leaves = buildLeafHashes(entityId, version, fullState);
-            const recomputedRoot = buildMerkleRoot(leaves);
-            const match = recomputedRoot === snapshot.merkle_root;
-            res.status(200).json({
-                status: "success",
-                entityId,
-                version,
-                storedRoot: snapshot.merkle_root,
-                recomputedRoot,
-                match,
-                eventCount: relevantEvents.length,
-            });
+    app.get("/snapshot/verify/:entityId/:version", (0, asyncHandler_1.asyncHandler)(async (req, res) => {
+        const rawEntityId = req.params.entityId;
+        const rawVersion = req.params.version;
+        if (!rawEntityId || Array.isArray(rawEntityId)) {
+            throw new ValidationError_1.ValidationError("Invalid entityId");
         }
-        catch (error) {
-            core_1.logger.error({
-                module: "API",
-                action: "Snapshot verification failed",
-                details: String(error),
-            });
-            res.status(500).json({
-                status: "error",
-                message: error instanceof Error ? error.message : "Unknown error",
-            });
+        if (!rawVersion || Array.isArray(rawVersion)) {
+            throw new ValidationError_1.ValidationError("Invalid version");
         }
-    });
-    app.get("/entities/:entityId/ledger", async (req, res) => {
-        try {
-            const rawEntityId = req.params.entityId;
-            if (Array.isArray(rawEntityId)) {
-                res.status(400).json({
-                    status: "error",
-                    message: "Invalid entityId",
-                });
-                return;
-            }
-            const entityId = rawEntityId;
-            // 1️⃣ Entity metadata
-            const entityRows = (await (0, db_1.query)(`
-  SELECT id, version
-  FROM entities
-  WHERE id = $1
-  `, [entityId]));
-            if (entityRows.length === 0) {
-                res.status(404).json({
-                    status: "error",
-                    message: "Entity not found",
-                });
-                return;
-            }
-            const entity = entityRows[0];
-            // 2️⃣ Events (ordered)
-            const store = new PostgresEventStore_1.PostgresEventStore();
-            const events = await store.getByEntity(entityId);
-            // 3️⃣ Latest snapshot
-            const snapshotRows = (await (0, db_1.query)(`
-  SELECT id, version, merkle_root, created_at
-  FROM snapshots
-  WHERE entity_id = $1
-  ORDER BY version DESC
-  LIMIT 1
-  `, [entityId]));
-            const snapshot = snapshotRows.length > 0 ? snapshotRows[0] : null;
-            // 4️⃣ Projection
-            const projectionRows = (await (0, db_1.query)(`
-  SELECT balances_json, version, rebuilt_at
-  FROM entity_read_models
-  WHERE entity_id = $1
-  `, [entityId]));
-            const projection = projectionRows.length > 0 ? projectionRows[0] : null;
-            res.status(200).json({
-                status: "success",
-                entity: {
-                    id: entity.id,
-                    currentVersion: entity.version,
-                },
-                projection,
-                snapshot,
-                events,
-            });
+        const version = Number(rawVersion);
+        if (Number.isNaN(version)) {
+            throw new ValidationError_1.ValidationError("Version must be a number");
         }
-        catch (error) {
-            core_1.logger.error({
-                module: "API",
-                action: "Ledger fetch failed",
-                details: String(error),
-            });
-            res.status(500).json({
-                status: "error",
-                message: error instanceof Error ? error.message : "Unknown error",
-            });
+        const snapshotRows = (await (0, db_1.query)(`
+      SELECT version, leaf_count, merkle_root
+      FROM snapshots
+      WHERE entity_id = $1
+      AND version = $2
+      `, [rawEntityId, version]));
+        if (snapshotRows.length === 0) {
+            throw new ValidationError_1.ValidationError("Snapshot not found");
         }
-    });
-    app.post("/entities", authMiddleware_1.requireAuth, async (req, res) => {
-        try {
-            const authReq = req;
-            if (authReq.role !== "admin") {
-                res.status(403).json({
-                    status: "error",
-                    message: "Only admin can create entities",
-                });
-                return;
-            }
-            const { entityId } = req.body;
-            if (!entityId || typeof entityId !== "string") {
-                res.status(400).json({
-                    status: "error",
-                    message: "entityId is required",
-                });
-                return;
-            }
-            // Check if entity already exists
-            const existing = (await (0, db_1.query)(`
-  SELECT id
-  FROM entities
-  WHERE id = $1
-  `, [entityId]));
-            if (existing.length > 0) {
-                res.status(400).json({
-                    status: "error",
-                    message: "Entity already exists",
-                });
-                return;
-            }
-            await (0, db_1.query)(`
+        const snapshot = snapshotRows[0];
+        const store = new PostgresEventStore_1.PostgresEventStore();
+        const allEvents = await store.getByEntity(rawEntityId);
+        const relevantEvents = allEvents.filter((e) => e.metadata.version <= version);
+        const { replay } = await Promise.resolve().then(() => __importStar(require("../core")));
+        const { accountBalanceReducer } = await Promise.resolve().then(() => __importStar(require("../state")));
+        const { buildLeafHashes, buildMerkleRoot } = await Promise.resolve().then(() => __importStar(require("../core")));
+        const fullState = replay(relevantEvents, {}, accountBalanceReducer);
+        const leaves = buildLeafHashes(rawEntityId, version, fullState);
+        const recomputedRoot = buildMerkleRoot(leaves);
+        const match = recomputedRoot === snapshot.merkle_root;
+        res.status(200).json({
+            status: "success",
+            entityId: rawEntityId,
+            version,
+            storedRoot: snapshot.merkle_root,
+            recomputedRoot,
+            match,
+            eventCount: relevantEvents.length,
+        });
+    }));
+    app.get("/entities/:entityId/ledger", (0, asyncHandler_1.asyncHandler)(async (req, res) => {
+        const rawEntityId = req.params.entityId;
+        if (!rawEntityId || Array.isArray(rawEntityId)) {
+            throw new ValidationError_1.ValidationError("Invalid entityId");
+        }
+        // 1️⃣ Entity metadata
+        const entityRows = (await (0, db_1.query)(`
+      SELECT id, version
+      FROM entities
+      WHERE id = $1
+      `, [rawEntityId]));
+        if (entityRows.length === 0) {
+            throw new ValidationError_1.ValidationError("Entity not found");
+        }
+        const entity = entityRows[0];
+        // 2️⃣ Events
+        const store = new PostgresEventStore_1.PostgresEventStore();
+        const events = await store.getByEntity(rawEntityId);
+        // 3️⃣ Latest snapshot
+        const snapshotRows = (await (0, db_1.query)(`
+      SELECT id, version, merkle_root, created_at
+      FROM snapshots
+      WHERE entity_id = $1
+      ORDER BY version DESC
+      LIMIT 1
+      `, [rawEntityId]));
+        const snapshot = snapshotRows.length > 0 ? snapshotRows[0] : null;
+        // 4️⃣ Projection
+        const projectionRows = (await (0, db_1.query)(`
+      SELECT balances_json, version, rebuilt_at
+      FROM entity_read_models
+      WHERE entity_id = $1
+      `, [rawEntityId]));
+        const projection = projectionRows.length > 0 ? projectionRows[0] : null;
+        res.status(200).json({
+            status: "success",
+            entity: {
+                id: entity.id,
+                currentVersion: entity.version,
+            },
+            projection,
+            snapshot,
+            events,
+        });
+    }));
+    app.post("/entities", authMiddleware_1.requireAuth, (0, asyncHandler_1.asyncHandler)(async (req, res) => {
+        const authReq = req;
+        if (authReq.role !== "admin") {
+            throw new AuthorizationError_1.AuthorizationError("Only admin can create entities");
+        }
+        const { entityId } = req.body;
+        if (!entityId || typeof entityId !== "string") {
+            throw new ValidationError_1.ValidationError("entityId is required");
+        }
+        const existing = (await (0, db_1.query)(`
+      SELECT id
+      FROM entities
+      WHERE id = $1
+      `, [entityId]));
+        if (existing.length > 0) {
+            throw new ValidationError_1.ValidationError("Entity already exists");
+        }
+        await (0, db_1.query)(`
       INSERT INTO entities (id, version, tenant_id)
       VALUES ($1, 0, $2)
       `, [entityId, authReq.tenantId]);
-            res.status(201).json({
-                status: "success",
-                entityId,
-            });
-        }
-        catch (error) {
-            core_1.logger.error({
-                module: "API",
-                action: "Entity creation failed",
-                details: String(error),
-            });
-            res.status(500).json({
-                status: "error",
-                message: error instanceof Error ? error.message : "Unknown error",
-            });
-        }
-    });
+        res.status(201).json({
+            status: "success",
+            entityId,
+        });
+    }));
     app.get("/certificate/:entityId/:version", async (req, res) => {
         try {
             const rawEntityId = req.params.entityId;
@@ -533,6 +411,7 @@ function startApiServer() {
     });
     const PORT = 3000;
     async function start() {
+        console.log("DB URL:", process.env.DATABASE_URL);
         try {
             // Fail-fast DB check
             await (0, db_1.query)("SELECT 1");
@@ -544,7 +423,7 @@ function startApiServer() {
                 });
             });
         }
-        catch (err) {
+        catch {
             core_1.logger.error({
                 module: "SYSTEM",
                 action: "DB connection failed. Exiting.",
@@ -552,5 +431,6 @@ function startApiServer() {
             process.exit(1);
         }
     }
+    app.use(errorMiddleware_1.errorMiddleware);
     start();
 }
