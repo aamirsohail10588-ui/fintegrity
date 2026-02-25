@@ -203,56 +203,9 @@ export function startApiServer(): void {
     }),
   );
 
-  app.get("/entity/:entityId", async (req: Request, res: Response) => {
-    try {
-      const rawEntityId = req.params.entityId;
-
-      if (Array.isArray(rawEntityId)) {
-        res.status(400).json({ error: "Invalid entityId" });
-        return;
-      }
-
-      const entityId: string = rawEntityId;
-
-      const rows = (await query(
-        `
-  SELECT entity_id,
-         last_event_id,
-         balances_json,
-         updated_at
-  FROM entity_read_models
-  WHERE entity_id = $1
-  `,
-        [entityId],
-      )) as EntityReadModelRow[];
-
-      if (rows.length === 0) {
-        res.status(404).json({ error: "Entity not found" });
-        return;
-      }
-
-      const row = rows[0];
-
-      res.json({
-        entityId: row.entity_id,
-        lastEventId: row.last_event_id,
-        balances: row.balances_json,
-        updatedAt: row.updated_at,
-      });
-      return;
-    } catch (error) {
-      logger.error({
-        module: "API",
-        action: "Entity fetch failed",
-        details: String(error),
-      });
-
-      res.status(500).json({ error: "Internal server error" });
-    }
-  });
-
   app.get(
-    "/events/:entityId",
+    "/entity/:entityId",
+    requireAuth,
     asyncHandler(async (req: Request, res: Response) => {
       const rawEntityId = req.params.entityId;
 
@@ -260,8 +213,80 @@ export function startApiServer(): void {
         throw new ValidationError("Invalid entityId");
       }
 
+      const authReq = req as AuthenticatedRequest;
+
+      // ✅ Ensure entity belongs to tenant
+      const entityCheck = (await query(
+        `
+      SELECT id
+      FROM entities
+      WHERE id = $1
+      AND tenant_id = $2
+      `,
+        [rawEntityId, authReq.tenantId],
+      )) as EntityRow[];
+
+      if (entityCheck.length === 0) {
+        throw new AuthorizationError("Entity not found or access denied");
+      }
+
+      const rows = (await query(
+        `
+      SELECT entity_id,
+             last_event_id,
+             balances_json,
+             updated_at
+      FROM entity_read_models
+      WHERE entity_id = $1
+      `,
+        [rawEntityId],
+      )) as EntityReadModelRow[];
+
+      if (rows.length === 0) {
+        throw new ValidationError("Entity projection not found");
+      }
+
+      const row = rows[0];
+
+      res.status(200).json({
+        status: "success",
+        entityId: row.entity_id,
+        lastEventId: row.last_event_id,
+        balances: row.balances_json,
+        updatedAt: row.updated_at,
+      });
+    }),
+  );
+
+  app.get(
+    "/events/:entityId",
+    requireAuth,
+    asyncHandler(async (req: Request, res: Response) => {
+      const rawEntityId = req.params.entityId;
+
+      if (!rawEntityId || Array.isArray(rawEntityId)) {
+        throw new ValidationError("Invalid entityId");
+      }
+
+      const authReq = req as AuthenticatedRequest;
+
+      // ✅ Ensure entity belongs to tenant
+      const entityCheck = (await query(
+        `
+      SELECT id
+      FROM entities
+      WHERE id = $1
+      AND tenant_id = $2
+      `,
+        [rawEntityId, authReq.tenantId],
+      )) as EntityRow[];
+
+      if (entityCheck.length === 0) {
+        throw new AuthorizationError("Entity not found or access denied");
+      }
+
       const store = new PostgresEventStore();
-      const events = await store.getByEntity(rawEntityId);
+      const events = await store.getByEntity(rawEntityId, authReq.tenantId);
 
       res.status(200).json({
         status: "success",
@@ -273,6 +298,7 @@ export function startApiServer(): void {
   );
   app.get(
     "/integrity/:entityId",
+    requireAuth,
     asyncHandler(async (req: Request, res: Response) => {
       const rawEntityId = req.params.entityId;
 
@@ -280,8 +306,25 @@ export function startApiServer(): void {
         throw new ValidationError("Invalid entityId");
       }
 
+      const authReq = req as AuthenticatedRequest;
+
+      // ✅ Ensure entity belongs to tenant
+      const entityCheck = (await query(
+        `
+      SELECT id
+      FROM entities
+      WHERE id = $1
+      AND tenant_id = $2
+      `,
+        [rawEntityId, authReq.tenantId],
+      )) as EntityRow[];
+
+      if (entityCheck.length === 0) {
+        throw new AuthorizationError("Entity not found or access denied");
+      }
+
       const store = new PostgresEventStore();
-      const events = await store.getByEntity(rawEntityId);
+      const events = await store.getByEntity(rawEntityId, authReq.tenantId);
 
       if (events.length === 0) {
         throw new ValidationError("No events found for entity");
@@ -327,6 +370,7 @@ export function startApiServer(): void {
         const authReq = req as AuthenticatedRequest;
 
         const snapshotId = await snapshotService.sealSnapshot(
+          authReq.tenantId,
           entityId,
           authReq.userId,
           authReq.role,
@@ -353,6 +397,7 @@ export function startApiServer(): void {
 
   app.get(
     "/snapshot/verify/:entityId/:version",
+    requireAuth,
     asyncHandler(async (req: Request, res: Response) => {
       const rawEntityId = req.params.entityId;
       const rawVersion = req.params.version;
@@ -371,14 +416,33 @@ export function startApiServer(): void {
         throw new ValidationError("Version must be a number");
       }
 
+      const authReq = req as AuthenticatedRequest;
+
+      // ✅ Ensure entity belongs to tenant
+      const entityCheck = (await query(
+        `
+      SELECT id
+      FROM entities
+      WHERE id = $1
+      AND tenant_id = $2
+      `,
+        [rawEntityId, authReq.tenantId],
+      )) as EntityRow[];
+
+      if (entityCheck.length === 0) {
+        throw new AuthorizationError("Entity not found or access denied");
+      }
+
+      // ✅ Snapshot must belong to tenant
       const snapshotRows = (await query(
         `
       SELECT version, leaf_count, merkle_root
       FROM snapshots
       WHERE entity_id = $1
       AND version = $2
+      AND tenant_id = $3
       `,
-        [rawEntityId, version],
+        [rawEntityId, version, authReq.tenantId],
       )) as SnapshotRow[];
 
       if (snapshotRows.length === 0) {
@@ -388,7 +452,7 @@ export function startApiServer(): void {
       const snapshot = snapshotRows[0];
 
       const store = new PostgresEventStore();
-      const allEvents = await store.getByEntity(rawEntityId);
+      const allEvents = await store.getByEntity(rawEntityId, authReq.tenantId);
 
       const relevantEvents = allEvents.filter(
         (e) => e.metadata.version <= version,
@@ -419,6 +483,7 @@ export function startApiServer(): void {
 
   app.get(
     "/entities/:entityId/ledger",
+    requireAuth,
     asyncHandler(async (req: Request, res: Response) => {
       const rawEntityId = req.params.entityId;
 
@@ -426,41 +491,43 @@ export function startApiServer(): void {
         throw new ValidationError("Invalid entityId");
       }
 
-      // 1️⃣ Entity metadata
+      const authReq = req as AuthenticatedRequest;
+
+      // ✅ Ensure entity belongs to tenant
       const entityRows = (await query(
         `
       SELECT id, version
       FROM entities
       WHERE id = $1
+      AND tenant_id = $2
       `,
-        [rawEntityId],
+        [rawEntityId, authReq.tenantId],
       )) as EntityRow[];
 
       if (entityRows.length === 0) {
-        throw new ValidationError("Entity not found");
+        throw new AuthorizationError("Entity not found or access denied");
       }
 
       const entity = entityRows[0];
 
-      // 2️⃣ Events
       const store = new PostgresEventStore();
-      const events = await store.getByEntity(rawEntityId);
+      const events = await store.getByEntity(rawEntityId, authReq.tenantId);
 
-      // 3️⃣ Latest snapshot
+      // ✅ Snapshot scoped to tenant
       const snapshotRows = (await query(
         `
       SELECT id, version, merkle_root, created_at
       FROM snapshots
       WHERE entity_id = $1
+      AND tenant_id = $2
       ORDER BY version DESC
       LIMIT 1
       `,
-        [rawEntityId],
+        [rawEntityId, authReq.tenantId],
       )) as SnapshotListRow[];
 
       const snapshot = snapshotRows.length > 0 ? snapshotRows[0] : null;
 
-      // 4️⃣ Projection
       const projectionRows = (await query(
         `
       SELECT balances_json, version, rebuilt_at
@@ -531,51 +598,60 @@ export function startApiServer(): void {
 
   app.get(
     "/certificate/:entityId/:version",
-    async (req: Request, res: Response) => {
-      try {
-        const rawEntityId = req.params.entityId;
-        const rawVersion = req.params.version;
+    requireAuth,
+    asyncHandler(async (req: Request, res: Response) => {
+      const rawEntityId = req.params.entityId;
+      const rawVersion = req.params.version;
 
-        if (Array.isArray(rawEntityId) || Array.isArray(rawVersion)) {
-          res.status(400).json({
-            status: "error",
-            message: "Invalid parameters",
-          });
-          return;
-        }
-
-        const entityId = rawEntityId;
-        const version = Number(rawVersion);
-
-        if (Number.isNaN(version)) {
-          res.status(400).json({
-            status: "error",
-            message: "Version must be a number",
-          });
-          return;
-        }
-
-        const service = new AuditCertificateService();
-
-        const result = await service.generate(entityId, version);
-
-        res.status(200).json({
-          status: "success",
-          ...result,
-        });
-      } catch (error) {
-        logger.error({
-          module: "API",
-          action: "Certificate generation failed",
-          details: String(error),
-        });
-
-        res.status(400).json({
-          status: "error",
-          message: error instanceof Error ? error.message : "Unknown error",
-        });
+      if (!rawEntityId || Array.isArray(rawEntityId)) {
+        throw new ValidationError("Invalid entityId");
       }
-    },
+
+      if (!rawVersion || Array.isArray(rawVersion)) {
+        throw new ValidationError("Invalid version");
+      }
+
+      const version = Number(rawVersion);
+
+      if (Number.isNaN(version)) {
+        throw new ValidationError("Version must be a number");
+      }
+
+      const authReq = req as AuthenticatedRequest;
+
+      // ✅ Ensure entity belongs to tenant
+      const entityCheck = (await query(
+        `
+      SELECT id
+      FROM entities
+      WHERE id = $1
+      AND tenant_id = $2
+      `,
+        [rawEntityId, authReq.tenantId],
+      )) as EntityRow[];
+
+      if (entityCheck.length === 0) {
+        throw new AuthorizationError("Entity not found or access denied");
+      }
+
+      // Optional but recommended: restrict to admin role
+      if (authReq.role !== "admin") {
+        throw new AuthorizationError("Only admin can generate certificates");
+      }
+
+      const service = new AuditCertificateService();
+
+      const result = await service.generate(
+        rawEntityId,
+        version,
+        authReq.tenantId,
+      );
+
+      res.status(200).json({
+        status: "success",
+        ...result,
+      });
+    }),
   );
 
   const PORT = 3000;

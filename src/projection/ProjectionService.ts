@@ -12,7 +12,7 @@ export class ProjectionService {
     this.store = store;
   }
 
-  public async rebuild(entityId: string): Promise<void> {
+  public async rebuild(entityId: string, tenantId: string): Promise<void> {
     const pool = getPool();
     const client = await pool.connect();
 
@@ -20,7 +20,7 @@ export class ProjectionService {
       await client.query("BEGIN");
 
       // 1️⃣ Load events using same transaction client
-      const events = await this.store.getByEntity(entityId, client);
+      const events = await this.store.getByEntity(entityId, tenantId, client);
 
       // 2️⃣ Deterministic replay
       const initialState: AccountBalanceState = {};
@@ -41,12 +41,13 @@ export class ProjectionService {
         `
   INSERT INTO entity_read_models (
     entity_id,
+    tenant_id,
     balances_json,
     version,
     last_event_id,
     rebuilt_at
   )
-  VALUES ($1, $2, $3, $4, now())
+  VALUES ($1, $2, $3, $4, $5, now())
   ON CONFLICT (entity_id)
   DO UPDATE SET
     balances_json = EXCLUDED.balances_json,
@@ -54,7 +55,13 @@ export class ProjectionService {
     last_event_id = EXCLUDED.last_event_id,
     rebuilt_at = now()
   `,
-        [entityId, JSON.stringify(state), currentVersion, lastEventId],
+        [
+          entityId,
+          tenantId,
+          JSON.stringify(state),
+          currentVersion,
+          lastEventId,
+        ],
       );
 
       await client.query("COMMIT");
@@ -69,8 +76,9 @@ export class ProjectionService {
   public async rebuildEntity(
     client: PoolClient,
     entityId: string,
+    tenantId: string,
   ): Promise<void> {
-    const events = await this.store.getByEntity(entityId, client);
+    const events = await this.store.getByEntity(entityId, tenantId, client);
 
     if (events.length === 0) {
       throw new Error("[PROJECTION] No events found for entity");
@@ -91,12 +99,13 @@ export class ProjectionService {
       `
     INSERT INTO entity_read_models (
       entity_id,
+      tenant_id,
       balances_json,
       version,
       last_event_id,
       rebuilt_at
     )
-    VALUES ($1, $2, $3, $4, now())
+    VALUES ($1, $2, $3, $4, $5, now())
     ON CONFLICT (entity_id)
     DO UPDATE SET
       balances_json = EXCLUDED.balances_json,
@@ -104,7 +113,7 @@ export class ProjectionService {
       last_event_id = EXCLUDED.last_event_id,
       rebuilt_at = now()
     `,
-      [entityId, JSON.stringify(state), currentVersion, lastEventId],
+      [entityId, tenantId, JSON.stringify(state), currentVersion, lastEventId],
     );
   }
 }

@@ -16,9 +16,9 @@ class AuditCertificateService {
     constructor() {
         this.store = new PostgresEventStore_1.PostgresEventStore();
     }
-    async generate(entityId, version) {
+    async generate(entityId, version, tenantId) {
         // 1. Load all events
-        const allEvents = await this.store.getByEntity(entityId);
+        const allEvents = await this.store.getByEntity(entityId, tenantId);
         const relevantEvents = allEvents.filter((e) => e.metadata.version <= version);
         if (relevantEvents.length === 0) {
             throw new Error("No events found for entity/version");

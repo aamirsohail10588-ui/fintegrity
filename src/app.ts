@@ -5,7 +5,6 @@ import { INGESTION_LAYER } from "./ingestion";
 import { STATE_LAYER } from "./state";
 import { GOVERNANCE_LAYER } from "./governance";
 import { TAX_LAYER } from "./tax";
-import { API_LAYER } from "./api";
 import { logger } from "./core";
 
 import { runSandbox } from "./sandbox/runner";
@@ -21,7 +20,6 @@ function bootstrap(): void {
   logger.info({ module: "SYSTEM", action: STATE_LAYER });
   logger.info({ module: "SYSTEM", action: GOVERNANCE_LAYER });
   logger.info({ module: "SYSTEM", action: TAX_LAYER });
-  logger.info({ module: "SYSTEM", action: API_LAYER });
 
   startApiServer();
 

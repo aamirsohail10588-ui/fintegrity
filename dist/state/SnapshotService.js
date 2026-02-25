@@ -45,7 +45,7 @@ class SnapshotService {
         this.store = store;
         this.commandService = new CommandService_1.CommandService(store);
     }
-    async sealSnapshot(entityId, actorId, actorRole) {
+    async sealSnapshot(tenantId, entityId, actorId, actorRole) {
         const pool = (await Promise.resolve().then(() => __importStar(require("../infrastructure/db")))).getPool();
         const client = await pool.connect();
         try {
@@ -54,14 +54,15 @@ class SnapshotService {
   SELECT version
   FROM entities
   WHERE id = $1
+    AND tenant_id = $2
   FOR UPDATE
-  `, [entityId]);
+  `, [entityId, tenantId]);
             if (entityResult.rows.length === 0) {
                 throw new Error("[SNAPSHOT] Entity not found");
             }
             const lockedVersion = Number(entityResult.rows[0].version);
             // 1️⃣ Load all events
-            const events = await this.store.getByEntity(entityId, client);
+            const events = await this.store.getByEntity(entityId, tenantId, client);
             const lastEvent = events[events.length - 1];
             if (lastEvent.metadata.eventType === "snapshot_sealed") {
                 throw new Error("[SNAPSHOT] Already sealed at current version");
@@ -91,12 +92,20 @@ class SnapshotService {
       INSERT INTO snapshots (
         id,
         entity_id,
+        tenant_id,
         version,
         merkle_root,
         leaf_count
       )
-      VALUES ($1,$2,$3,$4,$5)
-      `, [snapshotId, entityId, currentVersion, merkleRoot, leaves.length]);
+      VALUES ($1,$2,$3,$4,$5,$6)
+      `, [
+                snapshotId,
+                entityId,
+                tenantId,
+                currentVersion,
+                merkleRoot,
+                leaves.length,
+            ]);
             // 5️⃣ Emit snapshot_sealed event via EventStore
             const { canonicalStringify, hashString } = await Promise.resolve().then(() => __importStar(require("../core")));
             const eventId = (0, uuid_1.v4)();
@@ -134,7 +143,7 @@ class SnapshotService {
                 },
                 payload,
             };
-            await this.commandService.appendAndProject(client, entityId, snapshotEvent, currentVersion);
+            await this.commandService.appendAndProject(client, entityId, tenantId, snapshotEvent, currentVersion);
             await client.query("COMMIT");
             return snapshotId;
         }

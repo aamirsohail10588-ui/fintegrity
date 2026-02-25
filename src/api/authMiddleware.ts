@@ -1,11 +1,9 @@
 import { Request, Response, NextFunction } from "express";
 import jwt, { JwtPayload } from "jsonwebtoken";
 
-const JWT_SECRET = "supersecret123";
+import { config } from "../core/config";
 
-if (!JWT_SECRET) {
-  throw new Error("JWT_SECRET environment variable not set");
-}
+const JWT_SECRET = config.JWT_SECRET;
 
 export interface AuthenticatedRequest extends Request {
   userId: string;

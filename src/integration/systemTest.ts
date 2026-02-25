@@ -17,15 +17,23 @@ async function run() {
   const snapshotService = new SnapshotService(store);
 
   const entityId = "TEST-" + uuid();
+  const tenantId = uuid();
 
   try {
     await client.query("BEGIN");
+
+    await client.query(
+      `INSERT INTO tenants (id, name)
+   VALUES ($1, $2)
+   ON CONFLICT DO NOTHING`,
+      [tenantId, "Test Tenant"],
+    );
 
     // Create entity
     await client.query(
       `INSERT INTO entities (id, version, tenant_id)
    VALUES ($1, 0, $2)`,
-      [entityId, "tenant-A"],
+      [entityId, tenantId],
     );
 
     await client.query("COMMIT");
@@ -100,6 +108,7 @@ async function run() {
       await commandService.appendAndProject(
         client2,
         entityId,
+        tenantId,
         event as DomainEvent<typeof payload>,
         i - 1,
       );
@@ -116,12 +125,13 @@ async function run() {
   console.log("3 events appended");
 
   // Replay
-  const events = await store.getByEntity(entityId);
+  const events = await store.getByEntity(entityId, tenantId);
   replay(events, {}, accountBalanceReducer);
   console.log("Replay passed");
 
   // Seal snapshot
   const snapshotId = await snapshotService.sealSnapshot(
+    tenantId,
     entityId,
     "admin",
     "admin",
@@ -131,7 +141,7 @@ async function run() {
 
   // Double seal attempt
   try {
-    await snapshotService.sealSnapshot(entityId, "admin", "admin");
+    await snapshotService.sealSnapshot(tenantId, entityId, "admin", "admin");
     console.log("Double seal test: FAILED");
   } catch {
     console.log("Double seal test: PASSED");
@@ -154,7 +164,7 @@ async function run() {
     await clientA.query(
       `INSERT INTO entities (id, version, tenant_id)
    VALUES ($1, 0, $2)`,
-      [raceEntityId, "tenant-A"],
+      [raceEntityId, tenantId],
     );
     await clientA.query("COMMIT");
 
@@ -207,6 +217,7 @@ async function run() {
     const appendA = commandService.appendAndProject(
       clientA,
       raceEntityId,
+      tenantId,
       eventA as DomainEvent<typeof payload>,
       0,
     );
@@ -214,6 +225,7 @@ async function run() {
     const appendB = commandService.appendAndProject(
       clientB,
       raceEntityId,
+      tenantId,
       eventB as DomainEvent<typeof payload>,
       0,
     );
@@ -251,7 +263,7 @@ async function run() {
 
       const projectionService = new ProjectionService(store);
 
-      await projectionService.rebuildEntity(client, entityId);
+      await projectionService.rebuildEntity(client, entityId, tenantId);
 
       await client.query("COMMIT");
 
@@ -292,7 +304,7 @@ async function run() {
 
     // Attempt replay — MUST fail
     try {
-      const corruptedEvents = await store.getByEntity(entityId);
+      const corruptedEvents = await store.getByEntity(entityId, tenantId);
 
       replay(corruptedEvents, {}, accountBalanceReducer);
 

@@ -26,7 +26,7 @@ export class PostgresEventStore implements IEventStore {
   ): Promise<string> {
     const versionResult = await client.query(
       `
-  SELECT version
+  SELECT version, tenant_id
   FROM entities
   WHERE id = $1
   FOR UPDATE
@@ -41,6 +41,7 @@ export class PostgresEventStore implements IEventStore {
     }
 
     const currentVersion = Number(versionResult.rows[0].version);
+    const tenantId: string = versionResult.rows[0].tenant_id;
 
     if (currentVersion !== expectedVersion) {
       throw new Error(
@@ -51,20 +52,20 @@ export class PostgresEventStore implements IEventStore {
     await client.query(
       `
     INSERT INTO events (
-      event_id,
-      event_type,
-      module,
-      version,
-      occurred_at,
-      payload_hash,
-      payload,
-      source_id,
-      entity_id,
-      signature,
-      corrects_event_id,
-      actor_id,
-      actor_role
-    )
+  event_id,
+  event_type,
+  module,
+  version,
+  occurred_at,
+  payload_hash,
+  payload,
+  entity_id,
+  tenant_id,
+  signature,
+  corrects_event_id,
+  actor_id,
+  actor_role
+)
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
     `,
       [
@@ -75,8 +76,8 @@ export class PostgresEventStore implements IEventStore {
         event.metadata.occurredAt,
         event.metadata.payloadHash,
         JSON.stringify(event.payload),
-        null,
         event.metadata.entityId,
+        tenantId,
         event.metadata.signature,
         event.metadata.correctsEventId ?? null,
         event.metadata.actorId,
@@ -108,7 +109,7 @@ export class PostgresEventStore implements IEventStore {
     const entityId = events[0].metadata.entityId;
 
     const versionResult = await client.query(
-      `SELECT version FROM entities WHERE id = $1 FOR UPDATE`,
+      `SELECT version, tenant_id FROM entities WHERE id = $1 FOR UPDATE`,
       [entityId],
     );
 
@@ -117,6 +118,7 @@ export class PostgresEventStore implements IEventStore {
     }
 
     const currentVersion = Number(versionResult.rows[0].version);
+    const tenantId: string = versionResult.rows[0].tenant_id;
 
     if (currentVersion !== expectedVersion) {
       throw new Error(
@@ -132,20 +134,20 @@ export class PostgresEventStore implements IEventStore {
       await client.query(
         `
     INSERT INTO events (
-      event_id,
-      event_type,
-      module,
-      version,
-      occurred_at,
-      payload_hash,
-      payload,
-      source_id,
-      entity_id,
-      signature,
-      corrects_event_id,
-      actor_id,
-      actor_role
-    )
+  event_id,
+  event_type,
+  module,
+  version,
+  occurred_at,
+  payload_hash,
+  payload,
+  entity_id,
+  tenant_id,
+  signature,
+  corrects_event_id,
+  actor_id,
+  actor_role
+)
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
     `,
         [
@@ -156,8 +158,8 @@ export class PostgresEventStore implements IEventStore {
           event.metadata.occurredAt,
           event.metadata.payloadHash,
           JSON.stringify(event.payload),
-          null,
           event.metadata.entityId,
+          tenantId,
           event.metadata.signature,
           event.metadata.correctsEventId ?? null,
           event.metadata.actorId,
@@ -180,6 +182,7 @@ export class PostgresEventStore implements IEventStore {
 
   public async getByEntity(
     entityId: string,
+    tenantId: string,
     client?: PoolClient,
   ): Promise<DomainEvent<unknown>[]> {
     let rows: EventRow[];
@@ -187,46 +190,48 @@ export class PostgresEventStore implements IEventStore {
     if (client) {
       const result: QueryResult<EventRow> = await client.query(
         `
-    SELECT event_id,
-           event_type,
-           module,
-           version,
-           occurred_at,
-           payload_hash,
-           payload,
-           entity_id,
-           signature,
-           actor_id,
-           actor_role,
-           corrects_event_id
-    FROM events
-    WHERE entity_id = $1
-    ORDER BY version ASC
-    `,
-        [entityId],
+      SELECT event_id,
+             event_type,
+             module,
+             version,
+             occurred_at,
+             payload_hash,
+             payload,
+             entity_id,
+             signature,
+             actor_id,
+             actor_role,
+             corrects_event_id
+      FROM events
+      WHERE entity_id = $1
+        AND tenant_id = $2
+      ORDER BY version ASC
+      `,
+        [entityId, tenantId],
       );
 
       rows = result.rows;
     } else {
       rows = (await query(
         `
-    SELECT event_id,
-           event_type,
-           module,
-           version,
-           occurred_at,
-           payload_hash,
-           payload,
-           entity_id,
-           signature,
-           actor_id,
-           actor_role,
-           corrects_event_id
-    FROM events
-    WHERE entity_id = $1
-    ORDER BY version ASC
-  `,
-        [entityId],
+      SELECT event_id,
+             event_type,
+             module,
+             version,
+             occurred_at,
+             payload_hash,
+             payload,
+             entity_id,
+             signature,
+             actor_id,
+             actor_role,
+             corrects_event_id
+      FROM events
+      WHERE entity_id = $1
+        AND tenant_id = $2
+      ORDER BY version ASC
+      `,
+        [entityId, tenantId],
       )) as EventRow[];
     }
 

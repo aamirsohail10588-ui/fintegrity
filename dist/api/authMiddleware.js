@@ -5,10 +5,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.requireAuth = requireAuth;
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
-const JWT_SECRET = "supersecret123";
-if (!JWT_SECRET) {
-    throw new Error("JWT_SECRET environment variable not set");
-}
+const config_1 = require("../core/config");
+const JWT_SECRET = config_1.config.JWT_SECRET;
 function requireAuth(req, res, next) {
     const authHeader = req.header("Authorization");
     if (!authHeader || !authHeader.startsWith("Bearer ")) {

@@ -104,17 +104,25 @@ class IngestionService {
             await client.query(`
       INSERT INTO idempotency_keys (
         id,
+        tenant_id,
         entity_id,
         request_hash,
         response_event_id
       )
-      VALUES ($1,$2,$3,$4)
-      `, [idempotencyKey, input.entityId, requestHash, persistedEventId]);
+      VALUES ($1,$2,$3,$4,$5)
+      `, [
+                idempotencyKey,
+                tenantId,
+                input.entityId,
+                requestHash,
+                persistedEventId,
+            ]);
             await client.query("COMMIT");
+            console.log(">>> REBUILD TRIGGERED FOR", input.entityId, tenantId);
             // 🔄 Projection rebuild AFTER commit
             const { ProjectionService } = await Promise.resolve().then(() => __importStar(require("../projection/ProjectionService")));
             const projector = new ProjectionService(this.store);
-            await projector.rebuild(input.entityId);
+            await projector.rebuild(input.entityId, tenantId);
             return persistedEventId;
         }
         catch (error) {

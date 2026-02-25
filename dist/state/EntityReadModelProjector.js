@@ -9,8 +9,8 @@ class EntityReadModelProjector {
     constructor() {
         this.store = new PostgresEventStore_1.PostgresEventStore();
     }
-    async rebuild(entityId) {
-        const events = await this.store.getByEntity(entityId);
+    async rebuild(entityId, tenantId) {
+        const events = await this.store.getByEntity(entityId, tenantId);
         const balances = (0, core_1.replay)(events, {}, balanceProjection_1.accountBalanceReducer);
         const lastEventId = events.length > 0 ? events[events.length - 1].metadata.eventId : "NONE";
         await (0, db_1.query)(`

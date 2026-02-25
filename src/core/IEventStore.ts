@@ -16,6 +16,7 @@ export interface IEventStore {
 
   getByEntity(
     entityId: string,
+    tenantId: string,
     client?: PoolClient,
   ): Promise<DomainEvent<unknown>[]>;
 }

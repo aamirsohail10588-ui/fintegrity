@@ -7,7 +7,6 @@ const ingestion_1 = require("./ingestion");
 const state_1 = require("./state");
 const governance_1 = require("./governance");
 const tax_1 = require("./tax");
-const api_1 = require("./api");
 const core_2 = require("./core");
 const runner_1 = require("./sandbox/runner");
 function bootstrap() {
@@ -20,7 +19,6 @@ function bootstrap() {
     core_2.logger.info({ module: "SYSTEM", action: state_1.STATE_LAYER });
     core_2.logger.info({ module: "SYSTEM", action: governance_1.GOVERNANCE_LAYER });
     core_2.logger.info({ module: "SYSTEM", action: tax_1.TAX_LAYER });
-    core_2.logger.info({ module: "SYSTEM", action: api_1.API_LAYER });
     (0, server_1.startApiServer)();
     (0, runner_1.runSandbox)().catch((error) => {
         core_2.logger.error({

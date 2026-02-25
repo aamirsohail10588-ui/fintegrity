@@ -11,7 +11,7 @@ async function backfill(): Promise<void> {
   }
   const rows = (await query(
     `
-    SELECT id,
+    SELECT event_id,
            event_id,
            payload_hash,
            event_type,
@@ -36,7 +36,7 @@ async function backfill(): Promise<void> {
       SET signature = $1
       WHERE id = $2
       `,
-      [signature, row.id],
+      [signature, row.event_id],
     );
 
     console.log(`[MIGRATION] Updated event ${row.event_id}`);

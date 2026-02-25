@@ -31,9 +31,10 @@ export class AuditCertificateService {
   public async generate(
     entityId: string,
     version: number,
+    tenantId: string,
   ): Promise<AuditCertificateResult> {
     // 1. Load all events
-    const allEvents = await this.store.getByEntity(entityId);
+    const allEvents = await this.store.getByEntity(entityId, tenantId);
 
     const relevantEvents = allEvents.filter(
       (e) => e.metadata.version <= version,

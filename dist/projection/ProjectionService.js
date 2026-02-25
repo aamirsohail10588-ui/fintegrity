@@ -8,13 +8,13 @@ class ProjectionService {
     constructor(store) {
         this.store = store;
     }
-    async rebuild(entityId) {
+    async rebuild(entityId, tenantId) {
         const pool = (0, db_1.getPool)();
         const client = await pool.connect();
         try {
             await client.query("BEGIN");
             // 1️⃣ Load events using same transaction client
-            const events = await this.store.getByEntity(entityId, client);
+            const events = await this.store.getByEntity(entityId, tenantId, client);
             // 2️⃣ Deterministic replay
             const initialState = {};
             const state = (0, core_1.replay)(events, initialState, state_1.accountBalanceReducer);
@@ -24,19 +24,26 @@ class ProjectionService {
             await client.query(`
   INSERT INTO entity_read_models (
     entity_id,
+    tenant_id,
     balances_json,
     version,
     last_event_id,
     rebuilt_at
   )
-  VALUES ($1, $2, $3, $4, now())
+  VALUES ($1, $2, $3, $4, $5, now())
   ON CONFLICT (entity_id)
   DO UPDATE SET
     balances_json = EXCLUDED.balances_json,
     version = EXCLUDED.version,
     last_event_id = EXCLUDED.last_event_id,
     rebuilt_at = now()
-  `, [entityId, JSON.stringify(state), currentVersion, lastEventId]);
+  `, [
+                entityId,
+                tenantId,
+                JSON.stringify(state),
+                currentVersion,
+                lastEventId,
+            ]);
             await client.query("COMMIT");
         }
         catch (err) {
@@ -48,8 +55,8 @@ class ProjectionService {
         }
     }
     // STRICT full rebuild — admin only
-    async rebuildEntity(client, entityId) {
-        const events = await this.store.getByEntity(entityId, client);
+    async rebuildEntity(client, entityId, tenantId) {
+        const events = await this.store.getByEntity(entityId, tenantId, client);
         if (events.length === 0) {
             throw new Error("[PROJECTION] No events found for entity");
         }
@@ -60,19 +67,20 @@ class ProjectionService {
         await client.query(`
     INSERT INTO entity_read_models (
       entity_id,
+      tenant_id,
       balances_json,
       version,
       last_event_id,
       rebuilt_at
     )
-    VALUES ($1, $2, $3, $4, now())
+    VALUES ($1, $2, $3, $4, $5, now())
     ON CONFLICT (entity_id)
     DO UPDATE SET
       balances_json = EXCLUDED.balances_json,
       version = EXCLUDED.version,
       last_event_id = EXCLUDED.last_event_id,
       rebuilt_at = now()
-    `, [entityId, JSON.stringify(state), currentVersion, lastEventId]);
+    `, [entityId, tenantId, JSON.stringify(state), currentVersion, lastEventId]);
     }
 }
 exports.ProjectionService = ProjectionService;

@@ -49,11 +49,15 @@ async function run() {
     const commandService = new CommandService_1.CommandService(store);
     const snapshotService = new SnapshotService_1.SnapshotService(store);
     const entityId = "TEST-" + (0, uuid_1.v4)();
+    const tenantId = (0, uuid_1.v4)();
     try {
         await client.query("BEGIN");
+        await client.query(`INSERT INTO tenants (id, name)
+   VALUES ($1, $2)
+   ON CONFLICT DO NOTHING`, [tenantId, "Test Tenant"]);
         // Create entity
         await client.query(`INSERT INTO entities (id, version, tenant_id)
-   VALUES ($1, 0, $2)`, [entityId, "tenant-A"]);
+   VALUES ($1, 0, $2)`, [entityId, tenantId]);
         await client.query("COMMIT");
     }
     catch (err) {
@@ -116,7 +120,7 @@ async function run() {
                 },
                 payload,
             };
-            await commandService.appendAndProject(client2, entityId, event, i - 1);
+            await commandService.appendAndProject(client2, entityId, tenantId, event, i - 1);
         }
         await client2.query("COMMIT");
     }
@@ -129,15 +133,15 @@ async function run() {
     }
     console.log("3 events appended");
     // Replay
-    const events = await store.getByEntity(entityId);
+    const events = await store.getByEntity(entityId, tenantId);
     (0, core_1.replay)(events, {}, state_1.accountBalanceReducer);
     console.log("Replay passed");
     // Seal snapshot
-    const snapshotId = await snapshotService.sealSnapshot(entityId, "admin", "admin");
+    const snapshotId = await snapshotService.sealSnapshot(tenantId, entityId, "admin", "admin");
     console.log("Snapshot sealed:", snapshotId);
     // Double seal attempt
     try {
-        await snapshotService.sealSnapshot(entityId, "admin", "admin");
+        await snapshotService.sealSnapshot(tenantId, entityId, "admin", "admin");
         console.log("Double seal test: FAILED");
     }
     catch {
@@ -154,7 +158,7 @@ async function run() {
         await clientB.query("BEGIN");
         // Create entity
         await clientA.query(`INSERT INTO entities (id, version, tenant_id)
-   VALUES ($1, 0, $2)`, [raceEntityId, "tenant-A"]);
+   VALUES ($1, 0, $2)`, [raceEntityId, tenantId]);
         await clientA.query("COMMIT");
         // Both read version 0 and try to append version 1
         const payload = {
@@ -196,8 +200,8 @@ async function run() {
         };
         const eventA = buildEvent((0, uuid_1.v4)());
         const eventB = buildEvent((0, uuid_1.v4)());
-        const appendA = commandService.appendAndProject(clientA, raceEntityId, eventA, 0);
-        const appendB = commandService.appendAndProject(clientB, raceEntityId, eventB, 0);
+        const appendA = commandService.appendAndProject(clientA, raceEntityId, tenantId, eventA, 0);
+        const appendB = commandService.appendAndProject(clientB, raceEntityId, tenantId, eventB, 0);
         let successCount = 0;
         let failureCount = 0;
         await Promise.allSettled([appendA, appendB]).then((results) => {
@@ -228,7 +232,7 @@ async function run() {
         try {
             await client.query("BEGIN");
             const projectionService = new ProjectionService_1.ProjectionService(store);
-            await projectionService.rebuildEntity(client, entityId);
+            await projectionService.rebuildEntity(client, entityId, tenantId);
             await client.query("COMMIT");
             console.log("Admin full rebuild test: PASSED");
         }
@@ -261,7 +265,7 @@ async function run() {
         }
         // Attempt replay — MUST fail
         try {
-            const corruptedEvents = await store.getByEntity(entityId);
+            const corruptedEvents = await store.getByEntity(entityId, tenantId);
             (0, core_1.replay)(corruptedEvents, {}, state_1.accountBalanceReducer);
             console.log("Tamper detection test: FAILED");
             throw new Error("Integrity system did not detect tampering");

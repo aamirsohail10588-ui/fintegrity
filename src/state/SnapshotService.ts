@@ -16,6 +16,7 @@ export class SnapshotService {
     this.commandService = new CommandService(store);
   }
   public async sealSnapshot(
+    tenantId: string,
     entityId: string,
     actorId: string,
     actorRole: string,
@@ -31,9 +32,10 @@ export class SnapshotService {
   SELECT version
   FROM entities
   WHERE id = $1
+    AND tenant_id = $2
   FOR UPDATE
   `,
-        [entityId],
+        [entityId, tenantId],
       );
 
       if (entityResult.rows.length === 0) {
@@ -43,7 +45,7 @@ export class SnapshotService {
       const lockedVersion = Number(entityResult.rows[0].version);
 
       // 1️⃣ Load all events
-      const events = await this.store.getByEntity(entityId, client);
+      const events = await this.store.getByEntity(entityId, tenantId, client);
 
       const lastEvent = events[events.length - 1];
 
@@ -95,13 +97,21 @@ export class SnapshotService {
       INSERT INTO snapshots (
         id,
         entity_id,
+        tenant_id,
         version,
         merkle_root,
         leaf_count
       )
-      VALUES ($1,$2,$3,$4,$5)
+      VALUES ($1,$2,$3,$4,$5,$6)
       `,
-        [snapshotId, entityId, currentVersion, merkleRoot, leaves.length],
+        [
+          snapshotId,
+          entityId,
+          tenantId,
+          currentVersion,
+          merkleRoot,
+          leaves.length,
+        ],
       );
 
       // 5️⃣ Emit snapshot_sealed event via EventStore
@@ -153,6 +163,7 @@ export class SnapshotService {
       await this.commandService.appendAndProject(
         client,
         entityId,
+        tenantId,
         snapshotEvent,
         currentVersion,
       );

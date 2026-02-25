@@ -9,7 +9,7 @@ class BusinessRuleEngine {
   FROM events
   WHERE entity_id = $1
     AND payload ->> 'reference' = $2
-  ORDER BY id ASC
+  ORDER BY version ASC
   LIMIT 1
   `, [context.entityId, context.businessId]));
         if (rows.length === 0) {

@@ -4,7 +4,7 @@ const db_1 = require("../infrastructure/db");
 const signature_1 = require("../core/signature");
 async function backfill() {
     const rows = (await (0, db_1.query)(`
-    SELECT id,
+    SELECT event_id,
            event_id,
            payload_hash,
            event_type,
@@ -23,7 +23,7 @@ async function backfill() {
       UPDATE events
       SET signature = $1
       WHERE id = $2
-      `, [signature, row.id]);
+      `, [signature, row.event_id]);
         console.log(`[MIGRATION] Updated event ${row.event_id}`);
     }
     console.log("[MIGRATION] Signature backfill complete");

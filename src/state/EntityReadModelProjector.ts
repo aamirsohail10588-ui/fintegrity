@@ -7,8 +7,8 @@ import type { AccountBalanceState } from "./balanceProjection";
 export class EntityReadModelProjector {
   private readonly store = new PostgresEventStore();
 
-  public async rebuild(entityId: string): Promise<void> {
-    const events = await this.store.getByEntity(entityId);
+  public async rebuild(entityId: string, tenantId: string): Promise<void> {
+    const events = await this.store.getByEntity(entityId, tenantId);
 
     const balances = replay<AccountBalanceState>(
       events,
